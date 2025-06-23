@@ -39,10 +39,10 @@ namespace GoldHelper
         public ColorNode TitleTextColor { get; set; } = new ColorNode(Color.White);
 
         [Menu("Panel Title Bar Color")]
-        public ColorNode TitleBarColor { get; set; } = new ColorNode(new Color(0, 157, 255, 80));
+        public ColorNode TitleBarColor { get; set; } = new ColorNode(new Color(0, 157, 255, 130));
 
         [Menu("Panel Background Color")]
-        public ColorNode BackgroundColor { get; set; } = new ColorNode(new Color(0, 0, 0, 150));
+        public ColorNode BackgroundColor { get; set; } = new ColorNode(new Color(0, 0, 0, 180));
         
         [Menu("Graph Bar #1 Color")]
         public ColorNode BarColor1 { get; set; } = new ColorNode(Color.Red);

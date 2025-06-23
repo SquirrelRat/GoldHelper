@@ -5,7 +5,6 @@ using ExileCore;
 using ExileCore.PoEMemory.Elements;
 using ExileCore.Shared.Interfaces;
 using SharpDX;
-using Vector2 = System.Numerics.Vector2;
 
 namespace GoldHelper
 {
@@ -69,7 +68,7 @@ namespace GoldHelper
                 return;
             }
             
-            var drawPos = new Vector2(Settings.PositionX, Settings.PositionY);
+            var drawPos = new System.Numerics.Vector2(Settings.PositionX, Settings.PositionY);
             const int margin = 5;
 
             if (Settings.ShowSessionStats)
@@ -165,8 +164,9 @@ namespace GoldHelper
             _previousTotalGold = currentTotalGold;
         }
 
-        private Vector2 DrawSection(Vector2 position, string title, string content, bool drawGraph = false)
+        private System.Numerics.Vector2 DrawSection(System.Numerics.Vector2 position, string title, string content, bool drawGraph = false)
         {
+            var mousePosition = Input.MousePosition;
             const int padding = 10;
             const int titleFontSize = 16;
             const int contentFontSize = 13;
@@ -191,9 +191,9 @@ namespace GoldHelper
             Graphics.DrawBox(titleBarRect, Settings.TitleBarColor);
             Graphics.DrawBox(contentBgRect, Settings.BackgroundColor);
 
-            var titlePos = new Vector2(position.X + padding, position.Y + titleBarHeight / 2 - titleSize.Y / 2);
+            var titlePos = new System.Numerics.Vector2(position.X + padding, position.Y + titleBarHeight / 2 - titleSize.Y / 2);
             Graphics.DrawText(title, titlePos, Settings.TitleTextColor, titleFontSize);
-            var contentPos = new Vector2(position.X + padding, position.Y + titleBarHeight + (padding / 2f));
+            var contentPos = new System.Numerics.Vector2(position.X + padding, position.Y + titleBarHeight + (padding / 2f));
             Graphics.DrawText(content, contentPos, Settings.TextColor, contentFontSize);
 
             if (drawGraph)
@@ -215,18 +215,33 @@ namespace GoldHelper
                     var labelText = (i + 1).ToString();
                     var labelSize = Graphics.MeasureText(labelText, 12);
                     var labelX = slotCenterX - labelSize.X / 2;
-                    Graphics.DrawText(labelText, new Vector2(labelX, graphArea.Bottom + 5), Settings.TextColor, 12);
+                    Graphics.DrawText(labelText, new System.Numerics.Vector2(labelX, graphArea.Bottom + 5), Settings.TextColor, 12);
 
                     if (i < _recentMaps.Count)
                     {
                         var barHeight = (_recentMaps[i].GoldGained / (float)maxGold) * graphArea.Height;
                         var barX = slotCenterX - barWidth / 2;
                         var barY = graphArea.Bottom - barHeight;
-                        Graphics.DrawBox(new RectangleF(barX, barY, barWidth, barHeight), barColors[i]);
+                        var barRect = new RectangleF(barX, barY, barWidth, barHeight);
+                        
+                        Graphics.DrawBox(barRect, barColors[i]);
+
+                        if (barRect.Contains(mousePosition))
+                        {
+                            var mapName = _recentMaps[i].Name;
+                            var tooltipTextSize = Graphics.MeasureText(mapName);
+                            var tooltipX = mousePosition.X + 10;
+                            var tooltipY = mousePosition.Y - 15;
+                            var tooltipPos = new System.Numerics.Vector2(tooltipX, tooltipY);
+
+                            var tooltipBgRect = new RectangleF(tooltipPos.X - 3, tooltipPos.Y - 3, tooltipTextSize.X + 6, tooltipTextSize.Y + 6);
+                            Graphics.DrawBox(tooltipBgRect, Color.Black);
+                            Graphics.DrawText(mapName, tooltipPos, Color.White);
+                        }
                     }
                 }
             }
-            return new Vector2(width, titleBarHeight + contentHeight);
+            return new System.Numerics.Vector2(width, titleBarHeight + contentHeight);
         }
 
         private void UpdateDisplayCache()
