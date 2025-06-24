@@ -5,6 +5,7 @@ using ExileCore;
 using ExileCore.PoEMemory.Elements;
 using ExileCore.Shared.Interfaces;
 using SharpDX;
+using Vector2 = System.Numerics.Vector2;
 
 namespace GoldHelper
 {
@@ -68,26 +69,269 @@ namespace GoldHelper
                 return;
             }
             
-            var drawPos = new System.Numerics.Vector2(Settings.PositionX, Settings.PositionY);
-            const int margin = 5;
+            if (Settings.Layout.Mode.Value == "All-in-one")
+            {
+                RenderAllInOneMode();
+            }
+            else
+            {
+                RenderDetachedMode();
+            }
+        }
 
-            if (Settings.ShowSessionStats)
+        private void RenderDetachedMode()
+        {
+            if (Settings.Detached.ShowSessionStats)
             {
-                var bounds = DrawSection(drawPos, "Session Stats", _cachedSessionText, Settings.ShowGraphInSession);
-                if (Settings.LayoutOrientation.Value == "Vertical") drawPos.Y += bounds.Y + margin;
-                else drawPos.X += bounds.X + margin;
+                var drawPos = new Vector2(Settings.Detached.SessionPanelX, Settings.Detached.SessionPanelY);
+                DrawSection(drawPos, "Session Stats", _cachedSessionText, Settings.Graph.ShowGraph);
             }
-            if (Settings.ShowMapStats)
+            if (Settings.Detached.ShowMapStats)
             {
-                var bounds = DrawSection(drawPos, "Map Stats", _cachedMapText);
-                if (Settings.LayoutOrientation.Value == "Vertical") drawPos.Y += bounds.Y + margin;
-                else drawPos.X += bounds.X + margin;
+                var drawPos = new Vector2(Settings.Detached.MapStatsPanelX, Settings.Detached.MapStatsPanelY);
+                DrawSection(drawPos, "Map Stats", _cachedMapText);
             }
-            if (Settings.ShowAreaStats)
+            if (Settings.Detached.ShowAreaStats)
             {
-                var areaTitle = string.IsNullOrEmpty(_activeMapName) ? "Area: No active map" : $"Area: {_activeMapName}";
+                var drawPos = new Vector2(Settings.Detached.AreaPanelX, Settings.Detached.AreaPanelY);
+                var areaTitle = string.IsNullOrEmpty(_activeMapName) ? "Active Map" : _activeMapName;
                 DrawSection(drawPos, areaTitle, _cachedAreaText);
             }
+        }
+        
+        private void RenderAllInOneMode()
+        {
+            if (Settings.AllInOne.Orientation.Value == "Vertical")
+            {
+                RenderAllInOneVertical();
+            }
+            else
+            {
+                RenderAllInOneHorizontal();
+            }
+        }
+
+        private void RenderAllInOneVertical()
+        {
+            const int padding = 10;
+            const int sectionSpacing = 15;
+            const int headerFontSize = 14;
+            const int contentFontSize = 13;
+            
+            var pos = new Vector2(Settings.AllInOne.PositionX, Settings.AllInOne.PositionY);
+
+            var sessionSize = Graphics.MeasureText(_cachedSessionText, contentFontSize);
+            var mapStatsSize = Graphics.MeasureText(_cachedMapText, contentFontSize);
+            var areaStatsSize = Graphics.MeasureText(_cachedAreaText, contentFontSize);
+            var mainTitleSize = Graphics.MeasureText("Gold Helper", 16);
+            var sessionHeaderSize = Graphics.MeasureText("Session", headerFontSize);
+            var mapStatsHeaderSize = Graphics.MeasureText("Map Stats", headerFontSize);
+            var areaHeaderSize = Graphics.MeasureText("Map", headerFontSize);
+
+            const float minGraphWidth = 140f;
+            float maxTextWidth = new[] { sessionSize.X, mapStatsSize.X, areaStatsSize.X, mainTitleSize.X }.Max();
+            float panelContentWidth = Math.Max(maxTextWidth, Settings.Graph.ShowGraph ? minGraphWidth : 0);
+            float panelWidth = panelContentWidth + padding * 2;
+            
+            float graphHeight = Settings.Graph.ShowGraph ? 78f : 0;
+            
+            float calculatedContentHeight = (sessionHeaderSize.Y + 2) + sessionSize.Y + (Settings.Graph.ShowGraph ? (5 + graphHeight) : 0) +
+                                            sectionSpacing + (mapStatsHeaderSize.Y + 2) + mapStatsSize.Y +
+                                            sectionSpacing + (areaHeaderSize.Y + 2) + areaStatsSize.Y;
+            float totalContentHeight = padding + calculatedContentHeight + padding;
+            
+            var titleBarHeight = mainTitleSize.Y + padding;
+            
+            Graphics.DrawBox(new RectangleF(pos.X, pos.Y, panelWidth, titleBarHeight), Settings.Style.TitleBarColor);
+            Graphics.DrawText("Gold Helper", new Vector2(pos.X + padding, pos.Y + titleBarHeight / 2 - mainTitleSize.Y / 2), Settings.Style.TitleTextColor, 16);
+            Graphics.DrawBox(new RectangleF(pos.X, pos.Y + titleBarHeight, panelWidth, totalContentHeight), Settings.Style.BackgroundColor);
+
+            var currentPos = new Vector2(pos.X + padding, pos.Y + titleBarHeight + padding);
+
+            Graphics.DrawText("Session", currentPos, Settings.Style.AllInOneHeaderColor, headerFontSize);
+            currentPos.Y += sessionHeaderSize.Y + 2;
+            Graphics.DrawText(_cachedSessionText, currentPos, Settings.Style.TextColor, contentFontSize);
+            currentPos.Y += sessionSize.Y;
+
+            if (Settings.Graph.ShowGraph)
+            {
+                currentPos.Y += 5;
+                DrawGraph(currentPos, panelWidth - padding * 2);
+                currentPos.Y += graphHeight;
+            }
+            
+            currentPos.Y += sectionSpacing;
+            
+            Graphics.DrawText("Map Stats", currentPos, Settings.Style.AllInOneHeaderColor, headerFontSize);
+            currentPos.Y += mapStatsHeaderSize.Y + 2;
+            Graphics.DrawText(_cachedMapText, currentPos, Settings.Style.TextColor, contentFontSize);
+            currentPos.Y += mapStatsSize.Y;
+            
+            currentPos.Y += sectionSpacing;
+
+            Graphics.DrawText("Map", currentPos, Settings.Style.AllInOneHeaderColor, headerFontSize);
+            currentPos.Y += areaHeaderSize.Y + 2;
+            Graphics.DrawText(_cachedAreaText, currentPos, Settings.Style.TextColor, contentFontSize);
+        }
+
+        private void RenderAllInOneHorizontal()
+        {
+            const int padding = 10;
+            const int sectionSpacing = 15;
+            const int headerFontSize = 14;
+            const int contentFontSize = 13;
+            
+            var pos = new Vector2(Settings.AllInOne.PositionX, Settings.AllInOne.PositionY);
+
+            var sessionHeader = "Session";
+            var mapStatsHeader = "Map Stats";
+            var areaHeader = "Map";
+
+            var sessionTextSize = Graphics.MeasureText(_cachedSessionText, contentFontSize);
+            var mapStatsTextSize = Graphics.MeasureText(_cachedMapText, contentFontSize);
+            var areaStatsTextSize = Graphics.MeasureText(_cachedAreaText, contentFontSize);
+            
+            var sessionHeaderSize = Graphics.MeasureText(sessionHeader, headerFontSize);
+            var mapStatsHeaderSize = Graphics.MeasureText(mapStatsHeader, headerFontSize);
+            var areaHeaderSize = Graphics.MeasureText(areaHeader, headerFontSize);
+            
+            float graphColWidth = Settings.Graph.ShowGraph ? 150f : 0;
+            float graphHeight = Settings.Graph.ShowGraph ? 78f : 0;
+            
+            float sessionColWidth = Math.Max(sessionHeaderSize.X, sessionTextSize.X);
+            float mapStatsColWidth = Math.Max(mapStatsHeaderSize.X, mapStatsTextSize.X);
+            float areaColWidth = Math.Max(areaHeaderSize.X, areaStatsTextSize.X);
+            
+            float totalWidth = padding + sessionColWidth + (Settings.Graph.ShowGraph ? (sectionSpacing + graphColWidth) : 0) + 
+                               sectionSpacing + mapStatsColWidth + sectionSpacing + areaColWidth + padding;
+
+            float sessionColHeight = sessionHeaderSize.Y + 2 + sessionTextSize.Y;
+            float mapStatsColHeight = mapStatsHeaderSize.Y + 2 + mapStatsTextSize.Y;
+            float areaColHeight = areaHeaderSize.Y + 2 + areaStatsTextSize.Y;
+
+            float maxContentHeight = new[] { sessionColHeight, mapStatsColHeight, areaColHeight, graphHeight }.Max();
+            
+            var mainTitleSize = Graphics.MeasureText("Gold Helper", 16);
+            var titleBarHeight = mainTitleSize.Y + padding;
+            
+            Graphics.DrawBox(new RectangleF(pos.X, pos.Y, totalWidth, titleBarHeight), Settings.Style.TitleBarColor);
+            Graphics.DrawText("Gold Helper", new Vector2(pos.X + padding, pos.Y + titleBarHeight / 2 - mainTitleSize.Y / 2), Settings.Style.TitleTextColor, 16);
+            Graphics.DrawBox(new RectangleF(pos.X, pos.Y + titleBarHeight, totalWidth, maxContentHeight + padding * 2), Settings.Style.BackgroundColor);
+            
+            var currentPos = new Vector2(pos.X + padding, pos.Y + titleBarHeight + padding);
+            
+            Graphics.DrawText(sessionHeader, currentPos, Settings.Style.AllInOneHeaderColor, headerFontSize);
+            Graphics.DrawText(_cachedSessionText, new Vector2(currentPos.X, currentPos.Y + sessionHeaderSize.Y + 2), Settings.Style.TextColor, contentFontSize);
+            
+            currentPos.X += sessionColWidth + sectionSpacing;
+            
+            if (Settings.Graph.ShowGraph)
+            {
+                DrawGraph(currentPos, graphColWidth);
+                currentPos.X += graphColWidth + sectionSpacing;
+            }
+            
+            Graphics.DrawText(mapStatsHeader, currentPos, Settings.Style.AllInOneHeaderColor, headerFontSize);
+            Graphics.DrawText(_cachedMapText, new Vector2(currentPos.X, currentPos.Y + mapStatsHeaderSize.Y + 2), Settings.Style.TextColor, contentFontSize);
+
+            currentPos.X += mapStatsColWidth + sectionSpacing;
+            
+            Graphics.DrawText(areaHeader, currentPos, Settings.Style.AllInOneHeaderColor, headerFontSize);
+            Graphics.DrawText(_cachedAreaText, new Vector2(currentPos.X, currentPos.Y + areaHeaderSize.Y + 2), Settings.Style.TextColor, contentFontSize);
+        }
+
+        private void DrawGraph(Vector2 position, float width)
+        {
+            var mousePosition = Input.MousePosition;
+            var barCount = Settings.Graph.GraphBarCount.Value;
+            var graphArea = new RectangleF(position.X, position.Y, width, 50f);
+            var axisColor = Settings.Style.TextColor.Value;
+            axisColor.A = 150;
+            Graphics.DrawBox(new RectangleF(graphArea.X, graphArea.Y, 2, graphArea.Height + 2), axisColor);
+            Graphics.DrawBox(new RectangleF(graphArea.X, graphArea.Bottom, graphArea.Width, 2), axisColor);
+            
+            float totalBarAreaWidth = graphArea.Width * 0.7f;
+            float totalSpacingWidth = graphArea.Width * 0.3f;
+            float barWidth = totalBarAreaWidth / barCount;
+            float spacing = totalSpacingWidth / (barCount + 1);
+
+            var barColors = new[] { Settings.Graph.BarColor1.Value, Settings.Graph.BarColor2.Value, Settings.Graph.BarColor3.Value, Settings.Graph.BarColor4.Value, Settings.Graph.BarColor5.Value };
+            long maxGold = _recentMaps.Any() ? _recentMaps.Max(m => m.GoldGained) : 1;
+            if (maxGold == 0) maxGold = 1;
+
+            for (int i = 0; i < barCount; i++)
+            {
+                var barX = graphArea.X + spacing + i * (barWidth + spacing);
+                var labelText = (i + 1).ToString();
+                var labelSize = Graphics.MeasureText(labelText, 12);
+                var labelX = barX + barWidth / 2 - labelSize.X / 2;
+                Graphics.DrawText(labelText, new Vector2(labelX, graphArea.Bottom + 5), Settings.Style.TextColor, 12);
+
+                if (i < _recentMaps.Count)
+                {
+                    var barData = _recentMaps[i];
+                    var barHeight = (barData.GoldGained / (float)maxGold) * graphArea.Height;
+                    var barY = graphArea.Bottom - barHeight;
+                    var barRect = new RectangleF(barX, barY, barWidth, barHeight);
+                    
+                    Graphics.DrawBox(barRect, barColors[i]);
+
+                    if (barRect.Contains(mousePosition))
+                    {
+                        var mapName = barData.Name;
+                        var tooltipTextSize = Graphics.MeasureText(mapName);
+                        var tooltipX = mousePosition.X + 15;
+                        var tooltipY = mousePosition.Y - 25;
+                        var tooltipPos = new Vector2(tooltipX, tooltipY);
+                        var tooltipBgRect = new RectangleF(tooltipPos.X - 3, tooltipPos.Y - 3, tooltipTextSize.X + 6, tooltipTextSize.Y + 6);
+                        Graphics.DrawBox(tooltipBgRect, Color.Black);
+                        Graphics.DrawText(mapName, tooltipPos, Color.White);
+                    }
+                }
+            }
+        }
+        
+        private Vector2 DrawSection(Vector2 position, string title, string content, bool drawGraph = false)
+        {
+            const int padding = 10;
+            const int titleFontSize = 16;
+            const int contentFontSize = 13;
+
+            var titleSize = Graphics.MeasureText(title, titleFontSize);
+            var contentSize = Graphics.MeasureText(content, contentFontSize);
+            float contentMaxWidth = string.IsNullOrEmpty(content) ? 0 : content.Split('\n').Max(line => Graphics.MeasureText(line, contentFontSize).X);
+            float width = Math.Max(titleSize.X, contentMaxWidth) + padding * 2;
+            var titleBarHeight = titleSize.Y + padding;
+            
+            float contentTextHeight = contentSize.Y;
+            float graphTotalHeight = 0;
+            if (drawGraph)
+            {
+                const float graphHeight = 50f, labelHeight = 20f, graphTopPadding = 8f;
+                graphTotalHeight = graphHeight + labelHeight + graphTopPadding;
+            }
+            var contentHeight = contentTextHeight + graphTotalHeight + padding;
+
+            var titleBarRect = new RectangleF(position.X, position.Y, width, titleBarHeight);
+            var contentBgRect = new RectangleF(position.X, position.Y + titleBarHeight, width, contentHeight);
+            Graphics.DrawBox(titleBarRect, Settings.Style.TitleBarColor);
+            Graphics.DrawBox(contentBgRect, Settings.Style.BackgroundColor);
+
+            var titlePos = new Vector2(position.X + padding, position.Y + titleBarHeight / 2 - titleSize.Y / 2);
+            Graphics.DrawText(title, titlePos, Settings.Style.TitleTextColor, titleFontSize);
+            
+            if (!string.IsNullOrEmpty(content))
+            {
+                var contentPos = new Vector2(position.X + padding, position.Y + titleBarHeight + (padding / 2f));
+                Graphics.DrawText(content, contentPos, Settings.Style.TextColor, contentFontSize);
+            }
+
+            if (drawGraph)
+            {
+                DrawGraph(new Vector2(position.X + padding, position.Y + titleBarHeight + contentTextHeight + 15), width - padding * 2);
+            }
+            
+            return new Vector2(width, titleBarHeight + contentHeight);
         }
 
         private bool IsAnyGameUIVisible()
@@ -134,7 +378,11 @@ namespace GoldHelper
                 _totalMapGoldGained += _activeMapGoldGained;
                 var mapRun = new MapRunData { Name = _activeMapName, GoldGained = _activeMapGoldGained };
                 _recentMaps.Add(mapRun);
-                if (_recentMaps.Count > 3) _recentMaps.RemoveAt(0);
+                
+                while (_recentMaps.Count > Settings.Graph.GraphBarCount.Value)
+                {
+                    _recentMaps.RemoveAt(0);
+                }
             }
             _activeMapId = null;
             _activeMapName = null;
@@ -164,90 +412,11 @@ namespace GoldHelper
             _previousTotalGold = currentTotalGold;
         }
 
-        private System.Numerics.Vector2 DrawSection(System.Numerics.Vector2 position, string title, string content, bool drawGraph = false)
-        {
-            var mousePosition = Input.MousePosition;
-            const int padding = 10;
-            const int titleFontSize = 16;
-            const int contentFontSize = 13;
-
-            var titleSize = Graphics.MeasureText(title, titleFontSize);
-            var contentSize = Graphics.MeasureText(content, contentFontSize);
-            float contentMaxWidth = content.Split('\n').Max(line => Graphics.MeasureText(line, contentFontSize).X);
-            float width = Math.Max(titleSize.X, contentMaxWidth) + padding * 2;
-            var titleBarHeight = titleSize.Y + padding;
-            
-            float contentTextHeight = contentSize.Y;
-            float graphTotalHeight = 0;
-            if (drawGraph)
-            {
-                const float graphHeight = 50f, labelHeight = 20f, graphTopPadding = 8f;
-                graphTotalHeight = graphHeight + labelHeight + graphTopPadding;
-            }
-            var contentHeight = contentTextHeight + graphTotalHeight + padding;
-
-            var titleBarRect = new RectangleF(position.X, position.Y, width, titleBarHeight);
-            var contentBgRect = new RectangleF(position.X, position.Y + titleBarHeight, width, contentHeight);
-            Graphics.DrawBox(titleBarRect, Settings.TitleBarColor);
-            Graphics.DrawBox(contentBgRect, Settings.BackgroundColor);
-
-            var titlePos = new System.Numerics.Vector2(position.X + padding, position.Y + titleBarHeight / 2 - titleSize.Y / 2);
-            Graphics.DrawText(title, titlePos, Settings.TitleTextColor, titleFontSize);
-            var contentPos = new System.Numerics.Vector2(position.X + padding, position.Y + titleBarHeight + (padding / 2f));
-            Graphics.DrawText(content, contentPos, Settings.TextColor, contentFontSize);
-
-            if (drawGraph)
-            {
-                const float graphTopPadding = 8f;
-                var graphArea = new RectangleF(contentBgRect.X + padding, contentPos.Y + contentTextHeight + graphTopPadding, contentBgRect.Width - padding * 2, 50f);
-                var axisColor = Settings.TextColor.Value;
-                axisColor.A = 150;
-                Graphics.DrawBox(new RectangleF(graphArea.X, graphArea.Y, 2, graphArea.Height + 2), axisColor);
-                Graphics.DrawBox(new RectangleF(graphArea.X, graphArea.Bottom, graphArea.Width, 2), axisColor);
-                float barWidth = graphArea.Width / 6f;
-                var barColors = new[] { Settings.BarColor1.Value, Settings.BarColor2.Value, Settings.BarColor3.Value };
-                long maxGold = _recentMaps.Any() ? _recentMaps.Max(m => m.GoldGained) : 1;
-                if (maxGold == 0) maxGold = 1;
-
-                for (int i = 0; i < 3; i++)
-                {
-                    float slotCenterX = graphArea.X + (graphArea.Width * (1 + 2 * i)) / 6f;
-                    var labelText = (i + 1).ToString();
-                    var labelSize = Graphics.MeasureText(labelText, 12);
-                    var labelX = slotCenterX - labelSize.X / 2;
-                    Graphics.DrawText(labelText, new System.Numerics.Vector2(labelX, graphArea.Bottom + 5), Settings.TextColor, 12);
-
-                    if (i < _recentMaps.Count)
-                    {
-                        var barHeight = (_recentMaps[i].GoldGained / (float)maxGold) * graphArea.Height;
-                        var barX = slotCenterX - barWidth / 2;
-                        var barY = graphArea.Bottom - barHeight;
-                        var barRect = new RectangleF(barX, barY, barWidth, barHeight);
-                        
-                        Graphics.DrawBox(barRect, barColors[i]);
-
-                        if (barRect.Contains(mousePosition))
-                        {
-                            var mapName = _recentMaps[i].Name;
-                            var tooltipTextSize = Graphics.MeasureText(mapName);
-                            var tooltipX = mousePosition.X + 10;
-                            var tooltipY = mousePosition.Y - 15;
-                            var tooltipPos = new System.Numerics.Vector2(tooltipX, tooltipY);
-
-                            var tooltipBgRect = new RectangleF(tooltipPos.X - 3, tooltipPos.Y - 3, tooltipTextSize.X + 6, tooltipTextSize.Y + 6);
-                            Graphics.DrawBox(tooltipBgRect, Color.Black);
-                            Graphics.DrawText(mapName, tooltipPos, Color.White);
-                        }
-                    }
-                }
-            }
-            return new System.Numerics.Vector2(width, titleBarHeight + contentHeight);
-        }
-
         private void UpdateDisplayCache()
         {
             var sessionRate = _sessionElapsedTime.TotalHours > 0 ? _sessionGoldGained / _sessionElapsedTime.TotalHours : 0;
             _cachedSessionText = $"Time: {_sessionElapsedTime:hh\\:mm\\:ss}\n" + $"Gained: {_sessionGoldGained:N0}\n" + $"Rate: {sessionRate:N0}/hr";
+            
             var avgPerMap = _completedMapCount > 0 ? (double)_totalMapGoldGained / _completedMapCount : 0;
             _cachedMapText = $"Completed: {_completedMapCount}\n" + $"Avg. Gain: {avgPerMap:N0}";
             
