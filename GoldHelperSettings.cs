@@ -84,6 +84,10 @@ namespace GoldHelper
     {
         [Menu("Show Graph")]
         public ToggleNode ShowGraph { get; set; } = new ToggleNode(true);
+        
+        [Menu("Graph Mode", "Choose to display total gold gained per map or gold per hour.")]
+        public ListNode GraphMode { get; set; } = new ListNode { Value = "Max Gold", Values = new List<string> { "Max Gold", "Hourly Gold" } };
+
         [Menu("Bar Count")]
         public RangeNode<int> GraphBarCount { get; set; } = new RangeNode<int>(5, 3, 5);
         [Menu("Bar #1 Color")]
