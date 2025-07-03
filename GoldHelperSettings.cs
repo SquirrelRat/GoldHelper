@@ -14,28 +14,29 @@ namespace GoldHelper
         public DetachedSettings Detached { get; set; } = new DetachedSettings();
         public StyleSettings Style { get; set; } = new StyleSettings();
         public GraphSettings Graph { get; set; } = new GraphSettings();
+        public DataSettings Data { get; set; } = new DataSettings();
     }
 
     [Submenu(CollapsedByDefault = false)]
     public class LayoutSettings
     {
-        [Menu("Layout Mode", "Choose between a single unified panel or multiple independent panels.")]
+        [Menu("Layout Mode")]
         public ListNode Mode { get; set; } = new ListNode { Value = "All-in-one", Values = new List<string> { "All-in-one", "Detached" } };
 
-        [Menu("Reset All Stats", "Click to reset all session and map data. You can right-click this button to bind it to a hotkey.")]
+        [Menu("Reset All Stats")]
         public ButtonNode ResetButton { get; set; } = new ButtonNode();
     }
 
     [Submenu(CollapsedByDefault = true)]
     public class AllInOneSettings
     {
-        [Menu("Orientation", "This setting only applies if 'Layout Mode' is set to 'All-in-one'.")]
+        [Menu("Orientation")]
         public ListNode Orientation { get; set; } = new ListNode { Value = "Vertical", Values = new List<string> { "Vertical", "Horizontal" } };
         
-        [Menu("Position X", "This setting only applies if 'Layout Mode' is set to 'All-in-one'.")]
+        [Menu("Position X")]
         public RangeNode<int> PositionX { get; set; } = new RangeNode<int>(0, 0, 5000);
 
-        [Menu("Position Y", "This setting only applies if 'Layout Mode' is set to 'All-in-one'.")]
+        [Menu("Position Y")]
         public RangeNode<int> PositionY { get; set; } = new RangeNode<int>(250, 0, 5000);
     }
     
@@ -62,6 +63,13 @@ namespace GoldHelper
         public RangeNode<int> AreaPanelX { get; set; } = new RangeNode<int>(0, 0, 5000);
         [Menu("Active Map Panel Y")]
         public RangeNode<int> AreaPanelY { get; set; } = new RangeNode<int>(350, 0, 5000);
+
+        [Menu("Show Most Profitable Panel")]
+        public ToggleNode ShowMostProfitablePanel { get; set; } = new ToggleNode(true);
+        [Menu("Most Profitable Panel X")]
+        public RangeNode<int> MostProfitablePanelX { get; set; } = new RangeNode<int>(0, 0, 5000);
+        [Menu("Most Profitable Panel Y")]
+        public RangeNode<int> MostProfitablePanelY { get; set; } = new RangeNode<int>(450, 0, 5000);
     }
     
     [Submenu]
@@ -85,7 +93,7 @@ namespace GoldHelper
         [Menu("Show Graph")]
         public ToggleNode ShowGraph { get; set; } = new ToggleNode(true);
         
-        [Menu("Graph Mode", "Choose to display total gold gained per map or gold per hour.")]
+        [Menu("Graph Mode")]
         public ListNode GraphMode { get; set; } = new ListNode { Value = "Max Gold", Values = new List<string> { "Max Gold", "Hourly Gold" } };
 
         [Menu("Bar Count")]
@@ -100,5 +108,21 @@ namespace GoldHelper
         public ColorNode BarColor4 { get; set; } = new ColorNode(Color.Orange);
         [Menu("Bar #5 Color")]
         public ColorNode BarColor5 { get; set; } = new ColorNode(Color.Violet);
+    }
+
+    [Submenu]
+    public class DataSettings
+    {
+        [Menu("Enable Data Persistence")]
+        public ToggleNode EnablePersistence { get; set; } = new ToggleNode(true);
+
+        [Menu("Max Maps to Keep in History")]
+        public RangeNode<int> MaxMapsToKeep { get; set; } = new RangeNode<int>(100, 25, 200);
+
+        [Menu("Show Most Profitable Maps Panel")]
+        public ToggleNode ShowMostProfitableMap { get; set; } = new ToggleNode(true);
+        
+        [Menu("Reset Profitability Data")]
+        public ButtonNode ResetProfitabilityData { get; set; } = new ButtonNode();
     }
 }

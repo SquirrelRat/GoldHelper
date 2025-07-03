@@ -1,22 +1,26 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using ExileCore;
 using ExileCore.PoEMemory.Elements;
 using ExileCore.Shared.Interfaces;
 using SharpDX;
 using Vector2 = System.Numerics.Vector2;
+using System.IO;
+using System.Text.Json;
 
 namespace GoldHelper
 {
     public class GoldHelper : BaseSettingsPlugin<GoldHelperSettings>
     {
-        private class MapRunData
+        public class MapRunData
         {
             public string Name { get; set; }
             public long GoldGained { get; set; }
             public TimeSpan ElapsedTime { get; set; }
             public long GoldPerHour => ElapsedTime.TotalHours > 0 ? (long)(GoldGained / ElapsedTime.TotalHours) : 0;
+            public DateTime CompletionTime { get; set; }
         }
 
         private TimeSpan _sessionElapsedTime;
@@ -28,17 +32,35 @@ namespace GoldHelper
         private string _activeMapName;
         private TimeSpan _activeMapElapsedTime;
         private long _activeMapGoldGained;
+        private long _activeMapHash;
 
-        private readonly List<MapRunData> _recentMaps = new List<MapRunData>();
+        private List<MapRunData> _recentMaps = new List<MapRunData>();
         private long _previousTotalGold;
         private DateTime _lastUpdateTime = DateTime.MinValue;
+
         private string _cachedSessionText = "";
         private string _cachedMapText = "";
         private string _cachedAreaText = "";
+        private string _cachedMostProfitableMapText = "";
+
+        private string _mapDataFilePath;
 
         public override bool Initialise()
         {
             Name = "Gold Helper";
+            Settings.Layout.ResetButton.OnPressed = ResetAllStats;
+            Settings.Data.ResetProfitabilityData.OnPressed = ResetProfitabilityData;
+
+            if (string.IsNullOrEmpty(ConfigDirectory))
+            {
+                LogError("ConfigDirectory is not set. Data persistence will be disabled.", 5);
+            }
+            else
+            {
+                _mapDataFilePath = Path.Combine(ConfigDirectory, "map_runs_data.json");
+                LoadMapRunsFromJson();
+            }
+
             return true;
         }
 
@@ -50,7 +72,7 @@ namespace GoldHelper
                 var deltaTime = TimeSpan.FromMilliseconds(GameController.DeltaTime);
                 _sessionElapsedTime += deltaTime;
 
-                if (!string.IsNullOrEmpty(_activeMapId) && currentArea.Area.ToString() == _activeMapId)
+                if (currentArea.Hash == _activeMapHash)
                 {
                     _activeMapElapsedTime += deltaTime;
                 }
@@ -62,15 +84,15 @@ namespace GoldHelper
             if (DateTime.Now - _lastUpdateTime >= TimeSpan.FromSeconds(1))
             {
                 UpdateDisplayCache();
-                _lastUpdateTime = DateTime.Now;
             }
 
             return null;
         }
-
+        
+        #region Render Methods
         public override void Render()
         {
-            if (!Settings.Enable || !GameController.InGame || IsAnyGameUIVisible())
+            if (!Settings.Enable.Value || !GameController.InGame || IsAnyGameUIVisible())
             {
                 return;
             }
@@ -103,6 +125,12 @@ namespace GoldHelper
                 var areaTitle = string.IsNullOrEmpty(_activeMapName) ? "Active Map" : _activeMapName;
                 DrawSection(drawPos, areaTitle, _cachedAreaText);
             }
+            
+            if (Settings.Data.ShowMostProfitableMap && Settings.Detached.ShowMostProfitablePanel.Value && !string.IsNullOrEmpty(_cachedMostProfitableMapText))
+            {
+                var drawPos = new Vector2(Settings.Detached.MostProfitablePanelX, Settings.Detached.MostProfitablePanelY);
+                DrawSection(drawPos, "Most Profitable", _cachedMostProfitableMapText, false);
+            }
         }
 
         private void RenderAllInOneMode()
@@ -133,19 +161,26 @@ namespace GoldHelper
             var sessionHeaderSize = Graphics.MeasureText("Session", headerFontSize);
             var mapStatsHeaderSize = Graphics.MeasureText("Map Stats", headerFontSize);
             var areaHeaderSize = Graphics.MeasureText("Map", headerFontSize);
+            
+            var profitableHeader = "Most Profitable";
+            var profitableHeaderSize = Graphics.MeasureText(profitableHeader, headerFontSize);
+            var mostProfitableMapSize = Graphics.MeasureText(_cachedMostProfitableMapText, contentFontSize);
 
             const float minGraphWidth = 140f;
-            float maxTextWidth = new[] { sessionSize.X, mapStatsSize.X, areaStatsSize.X, mainTitleSize.X }.Max();
+            float maxTextWidth = new[] { sessionSize.X, mapStatsSize.X, areaStatsSize.X, mainTitleSize.X, mostProfitableMapSize.X }.Max();
             float panelContentWidth = Math.Max(maxTextWidth, Settings.Graph.ShowGraph ? minGraphWidth : 0);
             float panelWidth = panelContentWidth + padding * 2;
-
             float graphHeight = Settings.Graph.ShowGraph ? 78f : 0;
-
             float calculatedContentHeight = (sessionHeaderSize.Y + 2) + sessionSize.Y + (Settings.Graph.ShowGraph ? (5 + graphHeight) : 0) +
                                             sectionSpacing + (mapStatsHeaderSize.Y + 2) + mapStatsSize.Y +
                                             sectionSpacing + (areaHeaderSize.Y + 2) + areaStatsSize.Y;
-            float totalContentHeight = padding + calculatedContentHeight + padding;
 
+            if (Settings.Data.ShowMostProfitableMap && !string.IsNullOrEmpty(_cachedMostProfitableMapText))
+            {
+                calculatedContentHeight += sectionSpacing + (profitableHeaderSize.Y + 2) + mostProfitableMapSize.Y;
+            }
+
+            float totalContentHeight = padding + calculatedContentHeight + padding;
             var titleBarHeight = mainTitleSize.Y + padding;
 
             Graphics.DrawBox(new RectangleF(pos.X, pos.Y, panelWidth, titleBarHeight), Settings.Style.TitleBarColor);
@@ -154,30 +189,58 @@ namespace GoldHelper
 
             var currentPos = new Vector2(pos.X + padding, pos.Y + titleBarHeight + padding);
 
-            Graphics.DrawText("Session", currentPos, Settings.Style.AllInOneHeaderColor, headerFontSize);
-            currentPos.Y += sessionHeaderSize.Y + 2;
-            Graphics.DrawText(_cachedSessionText, currentPos, Settings.Style.TextColor, contentFontSize);
-            currentPos.Y += sessionSize.Y;
-
+            currentPos = DrawVerticalSessionSection(currentPos, sessionHeaderSize, sessionSize);
             if (Settings.Graph.ShowGraph)
             {
                 currentPos.Y += 5;
                 DrawGraph(currentPos, panelWidth - padding * 2);
                 currentPos.Y += graphHeight;
             }
-
+            
             currentPos.Y += sectionSpacing;
-
-            Graphics.DrawText("Map Stats", currentPos, Settings.Style.AllInOneHeaderColor, headerFontSize);
-            currentPos.Y += mapStatsHeaderSize.Y + 2;
-            Graphics.DrawText(_cachedMapText, currentPos, Settings.Style.TextColor, contentFontSize);
-            currentPos.Y += mapStatsSize.Y;
-
+            currentPos = DrawVerticalMapStatsSection(currentPos, mapStatsHeaderSize, mapStatsSize);
             currentPos.Y += sectionSpacing;
+            currentPos = DrawVerticalAreaSection(currentPos, areaHeaderSize, areaStatsSize);
 
-            Graphics.DrawText("Map", currentPos, Settings.Style.AllInOneHeaderColor, headerFontSize);
-            currentPos.Y += areaHeaderSize.Y + 2;
-            Graphics.DrawText(_cachedAreaText, currentPos, Settings.Style.TextColor, contentFontSize);
+            if (Settings.Data.ShowMostProfitableMap && !string.IsNullOrEmpty(_cachedMostProfitableMapText))
+            {
+                currentPos.Y += sectionSpacing;
+                DrawVerticalMostProfitableSection(currentPos, profitableHeader, profitableHeaderSize);
+            }
+        }
+        
+        private Vector2 DrawVerticalSessionSection(Vector2 position, Vector2 headerSize, Vector2 contentSize)
+        {
+            Graphics.DrawText("Session", position, Settings.Style.AllInOneHeaderColor, 14);
+            position.Y += headerSize.Y + 2;
+            Graphics.DrawText(_cachedSessionText, position, Settings.Style.TextColor, 13);
+            position.Y += contentSize.Y;
+            return position;
+        }
+
+        private Vector2 DrawVerticalMapStatsSection(Vector2 position, Vector2 headerSize, Vector2 contentSize)
+        {
+            Graphics.DrawText("Map Stats", position, Settings.Style.AllInOneHeaderColor, 14);
+            position.Y += headerSize.Y + 2;
+            Graphics.DrawText(_cachedMapText, position, Settings.Style.TextColor, 13);
+            position.Y += contentSize.Y;
+            return position;
+        }
+
+        private Vector2 DrawVerticalAreaSection(Vector2 position, Vector2 headerSize, Vector2 contentSize)
+        {
+            Graphics.DrawText("Map", position, Settings.Style.AllInOneHeaderColor, 14);
+            position.Y += headerSize.Y + 2;
+            Graphics.DrawText(_cachedAreaText, position, Settings.Style.TextColor, 13);
+            position.Y += contentSize.Y;
+            return position;
+        }
+
+        private void DrawVerticalMostProfitableSection(Vector2 position, string header, Vector2 headerSize)
+        {
+            Graphics.DrawText(header, position, Settings.Style.AllInOneHeaderColor, 14);
+            position.Y += headerSize.Y + 2;
+            Graphics.DrawText(_cachedMostProfitableMapText, position, Settings.Style.TextColor, 13);
         }
 
         private void RenderAllInOneHorizontal()
@@ -192,14 +255,17 @@ namespace GoldHelper
             var sessionHeader = "Session";
             var mapStatsHeader = "Map Stats";
             var areaHeader = "Map";
+            var profitableMapHeader = "Most Profitable";
 
             var sessionTextSize = Graphics.MeasureText(_cachedSessionText, contentFontSize);
             var mapStatsTextSize = Graphics.MeasureText(_cachedMapText, contentFontSize);
             var areaStatsTextSize = Graphics.MeasureText(_cachedAreaText, contentFontSize);
+            var profitableMapTextSize = Graphics.MeasureText(_cachedMostProfitableMapText, contentFontSize);
 
             var sessionHeaderSize = Graphics.MeasureText(sessionHeader, headerFontSize);
             var mapStatsHeaderSize = Graphics.MeasureText(mapStatsHeader, headerFontSize);
             var areaHeaderSize = Graphics.MeasureText(areaHeader, headerFontSize);
+            var profitableMapHeaderSize = Graphics.MeasureText(profitableMapHeader, headerFontSize);
 
             float graphColWidth = Settings.Graph.ShowGraph ? 150f : 0;
             float graphHeight = Settings.Graph.ShowGraph ? 78f : 0;
@@ -207,15 +273,22 @@ namespace GoldHelper
             float sessionColWidth = Math.Max(sessionHeaderSize.X, sessionTextSize.X);
             float mapStatsColWidth = Math.Max(mapStatsHeaderSize.X, mapStatsTextSize.X);
             float areaColWidth = Math.Max(areaHeaderSize.X, areaStatsTextSize.X);
+            float profitableMapColWidth = Math.Max(profitableMapHeaderSize.X, profitableMapTextSize.X);
 
             float totalWidth = padding + sessionColWidth + (Settings.Graph.ShowGraph ? (sectionSpacing + graphColWidth) : 0) +
-                               sectionSpacing + mapStatsColWidth + sectionSpacing + areaColWidth + padding;
+                               sectionSpacing + mapStatsColWidth + sectionSpacing + areaColWidth;
+
+            if (Settings.Data.ShowMostProfitableMap && !string.IsNullOrEmpty(_cachedMostProfitableMapText))
+            {
+                totalWidth += sectionSpacing + profitableMapColWidth;
+            }
 
             float sessionColHeight = sessionHeaderSize.Y + 2 + sessionTextSize.Y;
             float mapStatsColHeight = mapStatsHeaderSize.Y + 2 + mapStatsTextSize.Y;
             float areaColHeight = areaHeaderSize.Y + 2 + areaStatsTextSize.Y;
+            float profitableMapColHeight = profitableMapHeaderSize.Y + 2 + profitableMapTextSize.Y;
 
-            float maxContentHeight = new[] { sessionColHeight, mapStatsColHeight, areaColHeight, graphHeight }.Max();
+            float maxContentHeight = new[] { sessionColHeight, mapStatsColHeight, areaColHeight, graphHeight, profitableMapColHeight }.Max();
 
             var mainTitleSize = Graphics.MeasureText("Gold Helper", 16);
             var titleBarHeight = mainTitleSize.Y + padding;
@@ -244,6 +317,13 @@ namespace GoldHelper
 
             Graphics.DrawText(areaHeader, currentPos, Settings.Style.AllInOneHeaderColor, headerFontSize);
             Graphics.DrawText(_cachedAreaText, new Vector2(currentPos.X, currentPos.Y + areaHeaderSize.Y + 2), Settings.Style.TextColor, contentFontSize);
+
+            if (Settings.Data.ShowMostProfitableMap && !string.IsNullOrEmpty(_cachedMostProfitableMapText))
+            {
+                currentPos.X += areaColWidth + sectionSpacing;
+                Graphics.DrawText(profitableMapHeader, currentPos, Settings.Style.AllInOneHeaderColor, headerFontSize);
+                Graphics.DrawText(_cachedMostProfitableMapText, new Vector2(currentPos.X, currentPos.Y + profitableMapHeaderSize.Y + 2), Settings.Style.TextColor, contentFontSize);
+            }
         }
 
         private void DrawGraph(Vector2 position, float width)
@@ -291,7 +371,7 @@ namespace GoldHelper
                     {
                         valueToDisplay = barData.GoldGained;
                     }
-                    else 
+                    else
                     {
                         valueToDisplay = barData.GoldPerHour;
                     }
@@ -310,6 +390,7 @@ namespace GoldHelper
                         var tooltipY = mousePosition.Y - tooltipTextSize.Y - 5;
                         var tooltipPos = new Vector2(tooltipX, tooltipY);
                         var tooltipBgRect = new RectangleF(tooltipPos.X - 3, tooltipPos.Y - 3, tooltipTextSize.X + 6, tooltipTextSize.Y + 6);
+
                         Graphics.DrawBox(tooltipBgRect, Color.Black);
                         Graphics.DrawText(tooltipText, tooltipPos, Color.White);
                     }
@@ -375,43 +456,69 @@ namespace GoldHelper
                    ui.RitualWindow.IsVisible ||
                    ui.UltimatumPanel.IsVisible;
         }
-
+        #endregion
+        
+        #region Logic Methods
         private void CheckAreaChange(AreaInstance currentArea)
         {
-            var currentId = currentArea.Area.ToString();
-            var isMap = !currentArea.IsPeaceful && !currentArea.Name.Contains("Hideout") && !currentArea.Name.Contains("Town");
+            bool isMap = !currentArea.IsPeaceful && !currentArea.Name.Contains("Hideout") && !currentArea.Name.Contains("Town");
 
             if (isMap)
             {
-                if (currentId != _activeMapId)
+                if (_activeMapHash == 0)
+                {
+                    StartNewMap(currentArea);
+                }
+                else if (_activeMapHash != currentArea.Hash)
                 {
                     FinalizeActiveMap();
-                    _activeMapId = currentId;
-                    _activeMapName = currentArea.Name;
-                    _activeMapElapsedTime = TimeSpan.Zero;
-                    _activeMapGoldGained = 0;
+                    StartNewMap(currentArea);
                 }
             }
+        }
+        
+        private void StartNewMap(AreaInstance area)
+        {
+            _activeMapId = area.Area.ToString();
+            _activeMapName = area.Name;
+            _activeMapElapsedTime = TimeSpan.Zero;
+            _activeMapGoldGained = 0;
+            _activeMapHash = area.Hash;
+            LogMessage($"Started tracking new map: {_activeMapName}", 3);
         }
 
         private void FinalizeActiveMap()
         {
-            if (string.IsNullOrEmpty(_activeMapId)) return;
-            if (_activeMapGoldGained > 0)
+            if (_activeMapHash == 0 || _activeMapGoldGained <= 0)
             {
-                LogMessage($"Map '{_activeMapName}' completed. Gained: {_activeMapGoldGained:N0} gold.", 5);
-                _completedMapCount++;
-                _totalMapGoldGained += _activeMapGoldGained;
-                var mapRun = new MapRunData { Name = _activeMapName, GoldGained = _activeMapGoldGained, ElapsedTime = _activeMapElapsedTime };
-                _recentMaps.Add(mapRun);
-
-                while (_recentMaps.Count > Settings.Graph.GraphBarCount.Value)
-                {
-                    _recentMaps.RemoveAt(0);
-                }
+                _activeMapHash = 0;
+                return;
             }
-            _activeMapId = null;
-            _activeMapName = null;
+
+            LogMessage($"Map '{_activeMapName}' completed. Gained: {_activeMapGoldGained:N0} gold. Time: {_activeMapElapsedTime:hh\\:mm\\:ss}", 5);
+            _completedMapCount++;
+            _totalMapGoldGained += _activeMapGoldGained;
+            var mapRun = new MapRunData
+            {
+                Name = _activeMapName,
+                GoldGained = _activeMapGoldGained,
+                ElapsedTime = _activeMapElapsedTime,
+                CompletionTime = DateTime.Now
+            };
+            _recentMaps.Add(mapRun);
+
+            while (_recentMaps.Count > Settings.Data.MaxMapsToKeep.Value)
+            {
+                _recentMaps.RemoveAt(0);
+            }
+
+            if (Settings.Data.EnablePersistence)
+            {
+                SaveMapRunsToJson();
+            }
+            
+            _activeMapHash = 0;
+            UpdateMostProfitableMaps();
         }
 
         private void UpdateGoldTracking(AreaInstance currentArea)
@@ -426,13 +533,11 @@ namespace GoldHelper
             if (currentTotalGold > _previousTotalGold)
             {
                 var goldDifference = currentTotalGold - _previousTotalGold;
-                if (!currentArea.IsPeaceful)
+                _sessionGoldGained += goldDifference;
+
+                if (!currentArea.IsPeaceful && _activeMapHash != 0 && currentArea.Hash == _activeMapHash)
                 {
-                    _sessionGoldGained += goldDifference;
-                    if (!string.IsNullOrEmpty(_activeMapId) && currentArea.Area.ToString() == _activeMapId)
-                    {
-                        _activeMapGoldGained += goldDifference;
-                    }
+                    _activeMapGoldGained += goldDifference;
                 }
             }
             _previousTotalGold = currentTotalGold;
@@ -441,13 +546,178 @@ namespace GoldHelper
         private void UpdateDisplayCache()
         {
             var sessionRate = _sessionElapsedTime.TotalHours > 0 ? _sessionGoldGained / _sessionElapsedTime.TotalHours : 0;
-            _cachedSessionText = $"Time: {_sessionElapsedTime:hh\\:mm\\:ss}\n" + $"Gained: {_sessionGoldGained:N0}\n" + $"Rate: {sessionRate:N0}/hr";
+            _cachedSessionText = $"Time: {_sessionElapsedTime:hh\\:mm\\:ss}\n" + $"Gained: {_sessionGoldGained:N0}\n" + $"Rate: {FormatNumber(sessionRate)}/hr";
 
             var avgPerMap = _completedMapCount > 0 ? (double)_totalMapGoldGained / _completedMapCount : 0;
             _cachedMapText = $"Completed: {_completedMapCount}\n" + $"Avg. Gain: {avgPerMap:N0}";
 
             var areaRate = _activeMapElapsedTime.TotalHours > 0 ? _activeMapGoldGained / _activeMapElapsedTime.TotalHours : 0;
-            _cachedAreaText = $"Time: {_activeMapElapsedTime:hh\\:mm\\:ss}\n" + $"Gained: {_activeMapGoldGained:N0}\n" + $"Rate: {areaRate:N0}/hr";
+            _cachedAreaText = $"Time: {_activeMapElapsedTime:hh\\:mm\\:ss}\n" + $"Gained: {_activeMapGoldGained:N0}\n" + $"Rate: {FormatNumber(areaRate)}/hr";
+        }
+
+        private void UpdateMostProfitableMaps()
+        {
+            if (!_recentMaps.Any())
+            {
+                _cachedMostProfitableMapText = "No data yet.";
+                return;
+            }
+
+            var profitableMaps = _recentMaps
+                .GroupBy(run => run.Name)
+                .Select(group => new
+                {
+                    Name = group.Key,
+                    AverageHourly = group
+                                  .OrderByDescending(run => run.CompletionTime)
+                                  .Take(10)
+                                  .Average(run => run.GoldPerHour)
+                })
+                .OrderByDescending(map => map.AverageHourly)
+                .Take(3)
+                .ToList();
+
+            if (!profitableMaps.Any())
+            {
+                _cachedMostProfitableMapText = "No data yet.";
+                return;
+            }
+
+            var sb = new StringBuilder();
+            bool isFirstLine = true;
+            foreach (var map in profitableMaps)
+            {
+                if (!isFirstLine) sb.AppendLine();
+                sb.Append($"{map.Name} ({FormatNumber(map.AverageHourly)}/hr)");
+                isFirstLine = false;
+            }
+
+            _cachedMostProfitableMapText = sb.ToString();
+        }
+
+        private string FormatNumber(double num)
+        {
+            if (num >= 1000000000)
+                return (num / 1000000000D).ToString("0.#") + "b";
+            if (num >= 1000000)
+                return (num / 1000000D).ToString("0.#") + "m";
+            if (num >= 1000)
+                return (num / 1000D).ToString("0.#") + "k";
+
+            return num.ToString("N0");
+        }
+        #endregion
+
+        #region File IO Methods
+        private void SaveMapRunsToJson()
+        {
+            if (string.IsNullOrEmpty(_mapDataFilePath))
+            {
+                return;
+            }
+
+            try
+            {
+                var options = new JsonSerializerOptions { WriteIndented = true };
+                options.Converters.Add(new TimeSpanToStringConverter());
+                var jsonString = JsonSerializer.Serialize(_recentMaps, options);
+                File.WriteAllText(_mapDataFilePath, jsonString);
+                LogMessage($"Map data saved to {_mapDataFilePath}", 0.1f);
+            }
+            catch (Exception ex)
+            {
+                LogError($"Failed to save map data: {ex.Message}", 5);
+            }
+        }
+
+        private void LoadMapRunsFromJson()
+        {
+            if (string.IsNullOrEmpty(_mapDataFilePath) || !File.Exists(_mapDataFilePath))
+            {
+                _recentMaps = new List<MapRunData>();
+                return;
+            }
+
+            try
+            {
+                var jsonString = File.ReadAllText(_mapDataFilePath);
+                var options = new JsonSerializerOptions();
+                options.Converters.Add(new TimeSpanToStringConverter());
+                var loadedMaps = JsonSerializer.Deserialize<List<MapRunData>>(jsonString, options);
+                if (loadedMaps != null)
+                {
+                    _recentMaps = loadedMaps;
+                    while (_recentMaps.Count > Settings.Data.MaxMapsToKeep.Value)
+                    {
+                        _recentMaps.RemoveAt(0);
+                    }
+                    LogMessage($"Loaded {_recentMaps.Count} map runs from {_mapDataFilePath}", 0.1f);
+                    UpdateMostProfitableMaps();
+                }
+            }
+            catch (Exception ex)
+            {
+                LogError($"Failed to load map data: {ex.Message}", 5);
+                _recentMaps = new List<MapRunData>();
+            }
+        }
+
+        private class TimeSpanToStringConverter : System.Text.Json.Serialization.JsonConverter<TimeSpan>
+        {
+            public override TimeSpan Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+            {
+                string value = reader.GetString();
+                if (TimeSpan.TryParse(value, out TimeSpan result))
+                {
+                    return result;
+                }
+                return TimeSpan.Zero;
+            }
+
+            public override void Write(Utf8JsonWriter writer, TimeSpan value, JsonSerializerOptions options)
+            {
+                writer.WriteStringValue(value.ToString("c"));
+            }
+        }
+
+        private void ResetAllStats()
+        {
+            LogMessage("Resetting all stats.", 5);
+            _sessionElapsedTime = TimeSpan.Zero;
+            _sessionGoldGained = 0;
+            _completedMapCount = 0;
+            _totalMapGoldGained = 0;
+            _previousTotalGold = 0;
+
+            _activeMapId = null;
+            _activeMapName = null;
+            _activeMapElapsedTime = TimeSpan.Zero;
+            _activeMapGoldGained = 0;
+            _activeMapHash = 0;
+            
+            ResetProfitabilityData();
+            
+            UpdateDisplayCache();
+        }
+
+        private void ResetProfitabilityData()
+        {
+            LogMessage("Resetting map profitability data.", 5);
+            _recentMaps.Clear();
+
+            if (!string.IsNullOrEmpty(_mapDataFilePath) && File.Exists(_mapDataFilePath))
+            {
+                try
+                {
+                    File.Delete(_mapDataFilePath);
+                    LogMessage("Map data file ('map_runs_data.json') has been deleted.", 5);
+                }
+                catch (Exception ex)
+                {
+                    LogError($"Failed to delete map data file: {ex.Message}", 5);
+                }
+            }
+            UpdateMostProfitableMaps();
         }
 
         private long GetTotalGold()
@@ -456,5 +726,6 @@ namespace GoldHelper
             var storageGold = GameController.IngameState.IngameUi.VillageScreen?.CurrentGold ?? 0;
             return inventoryGold + storageGold;
         }
+        #endregion
     }
 }
